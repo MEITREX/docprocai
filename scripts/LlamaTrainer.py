@@ -15,7 +15,8 @@ class LlamaTrainer:
 
     output_path: str = "output"
 
-    model_id: str = "meta-llama/Meta-Llama-3-8B"
+    def __init__(self, model_id):
+        self.model_id = model_id
 
     def train(self, training_dataset: datasets.Dataset, eval_dataset: datasets.Dataset = None):
         bnb_config = transformers.BitsAndBytesConfig(load_in_8bit=True)
