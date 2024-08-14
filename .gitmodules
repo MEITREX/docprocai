@@ -1,0 +1,3 @@
+[submodule "docprocai_service"]
+	path = docprocai_service
+	url = https://github.com/MEITREX/docprocai_service.git
