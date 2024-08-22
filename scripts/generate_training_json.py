@@ -13,6 +13,7 @@ parser.add_argument('--out_file', type=str, help='Path to the output json file.'
 parser.add_argument('--max_prompt_length', type=int, help='Maximum number of characters in a single training prompt, before it is split into 2.')
 parser.add_argument('--eval_split', type=float, help='Fraction of the data to be used for evaluation.')
 parser.add_argument("--eval_file", type=str, help="Path to the output json file for evaluation data.")
+parser.add_argument("--format", choices=["full", "alpaca"], help="Format of the output json file.", default="full")
 
 args = parser.parse_args()
 
@@ -22,7 +23,7 @@ out_file: str = os.path.realpath(args.out_file)
 max_prompt_length: int = args.max_prompt_length
 eval_split: float = args.eval_split
 
-template = """
+template_full = """
 <|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
 You are a helpful assistant.<|eot_id|><|start_header_id|>user<|end_header_id|>
@@ -36,9 +37,17 @@ I have an input JSON file I need to process. It contains an array, where each el
 <<json_output>><|eot_id|>
 """
 
+template_alpaca_system = """
+You are a helpful assistant.
+"""
+
+template_alpaca_instruction = """
+I have an input JSON file I need to process. It contains an array, where each element is a snippet of a lecture video. Each element contains the keys "start_time", which denotes the start time of the snippet in seconds after video start, a "transcript" of the spoken text, and "screen_text", the text on screen as detected by OCR. The transcript and screen_text might contain inaccuracies due to the nature of STT and OCR. The video was split into snippets by detecting when the screen changes by a significant amount. Please create a JSON file containing an array of elements, where each element represents the respective snippet from the input JSON. Each element should contain a title you'd give this snippet. Choose high-quality and concise titles. If you want two back-to-back snippet to be considered as the same chapter, give them the same title in your JSON array. Remember to answer only with a JSON file.
+"""
+
 
 def generate_prompt_from_template(args: dict[str, str]) -> str:
-    prompt = template
+    prompt = template_full
     for key in args:
         prompt = prompt.replace("<<" + key + ">>", args[key])
     return prompt
@@ -81,11 +90,22 @@ def generate_prompts_from_sections(data: list[typing.Any]) -> typing.Generator[s
                 prompt_in_json.pop()
                 prompt_out_json.pop()
                 break
-
-        yield generate_prompt_from_template({
-            "json_input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False), 
-            "json_output": json.dumps(prompt_out_json, indent=4, ensure_ascii=False)
+            
+        if args.format == "alpaca":
+            yield {
+                "instruction": template_alpaca_instruction,
+                "system": template_alpaca_system,
+                "input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False),
+                "output": json.dumps(prompt_out_json, indent=4, ensure_ascii=False)
+            }
+        elif args.format == "full":
+            prompt = generate_prompt_from_template({
+                "json_input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False), 
+                "json_output": json.dumps(prompt_out_json, indent=4, ensure_ascii=False)
             })
+            yield {
+                "text": prompt
+            }
 
 
 prompts = []
@@ -99,7 +119,7 @@ for subdir, dirs, files in os.walk(in_dir):
         with open(file_path, "r", encoding="utf-8") as f:
             in_file_data = json.load(f)
             try:
-                prompts.extend([{"text": x} for x in generate_prompts_from_sections(in_file_data)])
+                prompts.extend([x for x in generate_prompts_from_sections(in_file_data)])
             except ValueError as e:
                 raise ValueError("Error processing " + file_path)
 
