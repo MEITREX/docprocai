@@ -12,7 +12,7 @@ in_root_path = os.path.realpath(sys.argv[1])
 out_root_path = os.path.realpath(sys.argv[2])
 
 # Extract video sections
-vp = VideoProcessor()
+vp = VideoProcessor(section_image_similarity_threshold=0.9)
 
 for subdir, dirs, files in os.walk(in_root_path):
     for file in files:
