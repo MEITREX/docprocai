@@ -1,55 +1,22 @@
 import json
 import os
-import argparse
 import typing
 import math
 import random
 import sys
+import yaml
 
-parser = argparse.ArgumentParser(description='Generate training json from json files containing video sections.')
+config = yaml.load(sys.argv[1])
 
-parser.add_argument('--in_dir', type=str, help='Path to a directory containing the json files to be processed.')
-parser.add_argument('--out_file', type=str, help='Path to the output json file.')
-parser.add_argument('--max_prompt_length', type=int, help='Maximum number of characters in a single training prompt, before it is split into 2.')
-parser.add_argument('--eval_split', type=float, help='Fraction of the data to be used for evaluation.')
-parser.add_argument("--eval_file", type=str, help="Path to the output json file for evaluation data.")
-parser.add_argument("--format", choices=["full", "alpaca"], help="Format of the output json file.", default="full")
+in_dir: str = os.path.realpath(config["in_dir"])
+out_file: str = os.path.realpath(config["out_file"])
 
-args = parser.parse_args()
-
-in_dir: str = os.path.realpath(args.in_dir)
-out_file: str = os.path.realpath(args.out_file)
-
-max_prompt_length: int = args.max_prompt_length
-eval_split: float = args.eval_split
-
-template_full = """
-<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are a helpful assistant.<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-I have an input JSON file I need to process. It contains an array, where each element is a snippet of a lecture video. Each element contains the keys "start_time", which denotes the start time of the snippet in seconds after video start, a "transcript" of the spoken text, and "screen_text", the text on screen as detected by OCR. The transcript and screen_text might contain inaccuracies due to the nature of STT and OCR. The video was split into snippets by detecting when the screen changes by a significant amount. Please create a JSON file containing an array of elements, where each element represents the respective snippet from the input JSON. Each element should contain a title you'd give this snippet. Choose high-quality and concise titles. If you want two back-to-back snippet to be considered as the same chapter, give them the same title in your JSON array. Remember to answer only with a JSON file. This is the input JSON:
-
-```
-<<json_input>>
-```<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-<<json_output>><|eot_id|>
-"""
-
-template_alpaca_system = """
-You are a helpful assistant.
-"""
-
-template_alpaca_instruction = """
-I have an input JSON file I need to process. It contains an array, where each element is a snippet of a lecture video. Each element contains the keys "start_time", which denotes the start time of the snippet in seconds after video start, a "transcript" of the spoken text, and "screen_text", the text on screen as detected by OCR. The transcript and screen_text might contain inaccuracies due to the nature of STT and OCR. The video was split into snippets by detecting when the screen changes by a significant amount. Please create a JSON file containing an array of elements, where each element represents the respective snippet from the input JSON. Each element should contain a title you'd give this snippet. Choose high-quality and concise titles. If you want two back-to-back snippet to be considered as the same chapter, give them the same title in your JSON array. Remember to answer only with a JSON file.
-"""
+max_prompt_length: int = config["max_prompt_length"]
+eval_split: float = config["eval_split"]
 
 
 def generate_prompt_from_template(args: dict[str, str]) -> str:
-    prompt = template_full
-    for key in args:
-        prompt = prompt.replace("<<" + key + ">>", args[key])
+    prompt = config["prompt"].format(**args)
     return prompt
 
 
@@ -58,7 +25,7 @@ def generate_prompts_from_sections(data: list[typing.Any]) -> typing.Generator[s
     # data is a json array of sections. We generate prompts from that. A prompt should contain as many sections as fit into max_prompt_length characters.
     while len(data_clone) > 0:
         prompt_in_json = []
-        prompt_out_json = []
+        prompt_out_json = {}
 
         while True:
             if(len(data_clone) == 0):
@@ -75,12 +42,9 @@ def generate_prompts_from_sections(data: list[typing.Any]) -> typing.Generator[s
             if("title" not in section_json):
                 raise ValueError("Title not found for section ", section_json)
 
-            section_output = {
-                "title": section_json["title"],
-            }
-
             prompt_in_json.append(section_input)
-            prompt_out_json.append(section_output)
+            # convert the start time to a string because JSON property keys can only be strings
+            prompt_out_json[str(section_json["start_time"])] = section_json["title"]
 
             if len(generate_prompt_from_template({
                     "json_input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False), 
@@ -91,21 +55,14 @@ def generate_prompts_from_sections(data: list[typing.Any]) -> typing.Generator[s
                 prompt_out_json.pop()
                 break
             
-        if args.format == "alpaca":
-            yield {
-                "instruction": template_alpaca_instruction,
-                "system": template_alpaca_system,
-                "input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False),
-                "output": json.dumps(prompt_out_json, indent=4, ensure_ascii=False)
-            }
-        elif args.format == "full":
-            prompt = generate_prompt_from_template({
-                "json_input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False), 
-                "json_output": json.dumps(prompt_out_json, indent=4, ensure_ascii=False)
-            })
-            yield {
-                "text": prompt
-            }
+        prompt = generate_prompt_from_template({
+            "json_input": json.dumps(prompt_in_json, indent=4, ensure_ascii=False), 
+            "json_output": json.dumps(prompt_out_json, indent=4, ensure_ascii=False)
+        })
+        yield {
+            "text": prompt
+        }
+            
 
 
 prompts = []
@@ -127,11 +84,11 @@ random.shuffle(prompts)
 
 training_prompts = prompts
 
-if args.eval_split is not None:
-    if args.eval_file is None:
+if config["eval_split"] is not None:
+    if config["eval_out_file"] is None:
         raise ValueError("Validation split specified but no validation file specified.")
     
-    eval_file: str = os.path.realpath(args.eval_file)
+    eval_file: str = os.path.realpath(config["eval_out_file"])
 
     eval_count = int(math.ceil(len(prompts) * eval_split))
     eval_prompts = prompts[:eval_count]
